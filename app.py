@@ -1,157 +1,180 @@
 import pandas as pd
 import base64, io, time, requests, trafilatura
-from dash import Dash, dcc, html, Input, Output, State, dash_table, no_update
+from dash import Dash, dcc, html, Input, Output, State, dash_table
 import dash_bootstrap_components as dbc
 from openai import OpenAI
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
-import plotly.express as px
 import os
 from dotenv import load_dotenv
 
-# === CONFIG ===
-load_dotenv() 
+# === CONFIG =====================================================================
+load_dotenv()
 API_KEY = os.getenv("OPENAI_API_KEY")
-client   = OpenAI(api_key=API_KEY)
-MAX_LENGTH = 3000  # characters to send per request
+client = OpenAI(api_key=API_KEY)
+MAX_LENGTH = 3000
 
 app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 app.title = "HumanCloud Sourcing Classification Tool"
 server = app.server
 
-# === LAYOUT === -----------------------------------------------------------
-app.layout = dbc.Container([
-    html.H1("HumanCloud Sourcing Classification Tool", className="my-3"),
+# === TOP-LEVEL TABS ==============================================================
+app.layout = dbc.Container(
+    dbc.Tabs(id="main-tabs", active_tab="tool", children=[
 
-    # 1) Codes CSV ----------------------------------------------------------------
-    dbc.Row([
-        dbc.Col([
-            html.H5("1. Upload Class Code File (CSV or XLSX):"),
-            dcc.Upload(
-                id="upload-code-csv",
-                children=html.Div(["Drag and Drop or ", html.A("Select Code File")]),
-                style={"width": "100%", "height": "60px", "lineHeight": "60px",
-                       "borderWidth": "1px", "borderStyle": "dashed",
-                       "borderRadius": "5px", "textAlign": "center"},
-                multiple=False,
-            ),
-            html.Div(id="upload-code-feedback", style={"color": "green", "marginTop": "10px"}),
-            dcc.Store(id="stored-code-list")
-        ])
-    ]),
-    html.Hr(),
+        # ------------------------------------------------------------------ TOOL
+        dbc.Tab(label="Classification Tool", tab_id="tool", children=[
 
-    # 2) Prompt template -----------------------------------------------------------
-    dbc.Row([
-        dbc.Col([
-            html.H5("2. Upload Prompt Template (.txt):"),
-            dcc.Upload(
-                id="upload-prompt",
-                children=html.Div(["Drag and Drop or ", html.A("Select Prompt File")]),
-                style={"width": "100%", "height": "60px", "lineHeight": "60px",
-                       "borderWidth": "1px", "borderStyle": "dashed",
-                       "borderRadius": "5px", "textAlign": "center"},
-                multiple=False,
-            ),
-            html.Div(id="upload-prompt-feedback", style={"color": "green", "marginTop": "10px"}),
-            dcc.Store(id="stored-prompt-text")
-        ])
-    ]),
-    html.Hr(),
+            html.H1("HumanCloud Sourcing Classification Tool", className="my-3"),
 
-    # 3) Model dropdown ------------------------------------------------------------
-    dbc.Row([
-        dbc.Col([
-            html.H5("3. Select OpenAI Model:"),
-            dcc.Dropdown(
-                id="model-selector",
-                options=[
-                    {"label": "gpt-4o ($5.00/million in, $15.00/million out)", "value": "gpt-4o"},
-                    {"label": "gpt-4-turbo ($10.00/$30.00)", "value": "gpt-4-turbo"},
-                    {"label": "gpt-4 ($30.00/$60.00)", "value": "gpt-4"},
-                    {"label": "gpt-3.5-turbo ($0.50/$1.50)", "value": "gpt-3.5-turbo"},
-                    {"label": "o3 ($10.00/$40.00)", "value": "o3"},
-                    {"label": "o3-mini ($1.10/$4.40)", "value": "o3-mini"},
-                ],
-                value="gpt-4o",
-                clearable=False
-            )
-        ])
-    ]),
-    html.Hr(),
-
-    # 4) URL list ------------------------------------------------------------------
-    dbc.Row([
-        dbc.Col([
-            html.H5("4. Upload URL List (CSV or XLSX, one column of URLs):"),
-            dcc.Upload(
-                id="upload-data",
-                children=html.Div(["Drag and Drop or ", html.A("Select URL File")]),
-                style={"width": "100%", "height": "60px", "lineHeight": "60px",
-                       "borderWidth": "1px", "borderStyle": "dashed",
-                       "borderRadius": "5px", "textAlign": "center"},
-                multiple=False,
-            ),
-            html.Div(id="upload-feedback", style={"color": "green", "marginTop": "10px"}),
-            html.Div(id="file-upload-status")
-        ])
-    ]),
-
-    # Run button + progress --------------------------------------------------------
-    dbc.Row([
-        dbc.Col([
-            dbc.Button("Run Classification", id="run-button",
-                       color="primary", className="mt-2"),
-            dcc.Loading(
-                children=html.Div(id="run-status", className="mt-2"),
-                type="default"
-            ),
-            html.Div(id="progress-indicator", className="mt-2",
-                     style={"whiteSpace": "pre-wrap"}),
-            dcc.Store(id="stored-csv")
-        ])
-    ]),
-    html.Hr(),
-
-    # === RESULTS TABS (table + pie chart) ========================================
-    dbc.Row([
-        dbc.Col([
-            dbc.Tabs(id="result-tabs", active_tab="table", children=[
-                dbc.Tab(label="Results Table", tab_id="table", children=[
-                    html.Br(),
-                    html.H5("Output Table"),
-                    dash_table.DataTable(
-                        id="output-table",
-                        page_size=10,
-                        style_table={"overflowX": "auto"},
-                        style_cell={"textAlign": "left"}
+            # 1) Codes CSV --------------------------------------------------
+            dbc.Row([
+                dbc.Col([
+                    html.H5("1. Upload Class Code File (CSV):"),
+                    dcc.Upload(
+                        id="upload-code-csv",
+                        children=html.Div(["Drag and Drop or ", html.A("Select Code File")]),
+                        style={"width": "100%", "height": "60px", "lineHeight": "60px",
+                               "borderWidth": "1px", "borderStyle": "dashed",
+                               "borderRadius": "5px", "textAlign": "center"},
+                        multiple=False,
                     ),
-                    html.Br(),
-                    dcc.Download(id="download-result"),
-                    # --- NEW filename box ---------------------------------
-                    html.Div([
-                        dbc.Input(id="desired-filename",
-                                  placeholder="classified_websites",
-                                  value="classified_websites",
-                                  type="text",
-                                  style={"maxWidth": "230px",
-                                         "display": "inline-block",
-                                         "marginRight": "8px"}),
-                    ], style={"display": "inline-block"}),
+                    html.Div(id="upload-code-feedback",
+                             style={"color": "green", "marginTop": "10px"}),
+                    dcc.Store(id="stored-code-list")
+                ])
+            ]),
+            html.Hr(),
 
-                    dbc.Button("Download CSV", id="download-btn", color="success")
-                ]),
-                dbc.Tab(label="Top-1 Summary", tab_id="summary", children=[
-                    html.Br(),
-                    html.H5("Top-1 Code Distribution"),
-                    dcc.Graph(id="summary-chart")
-                ]),
-            ])
-        ])
-    ])
-], fluid=True)
+            # 2) Prompt template -------------------------------------------
+            dbc.Row([
+                dbc.Col([
+                    html.H5("2. Upload Prompt Template (.txt):"),
+                    dcc.Upload(
+                        id="upload-prompt",
+                        children=html.Div(["Drag and Drop or ", html.A("Select Prompt File")]),
+                        style={"width": "100%", "height": "60px", "lineHeight": "60px",
+                               "borderWidth": "1px", "borderStyle": "dashed",
+                               "borderRadius": "5px", "textAlign": "center"},
+                        multiple=False,
+                    ),
+                    html.Div(id="upload-prompt-feedback",
+                             style={"color": "green", "marginTop": "10px"}),
+                    dcc.Store(id="stored-prompt-text")
+                ])
+            ]),
+            html.Hr(),
 
-# === Instant client-side confirmation ============================================
+            # 3) Model dropdown --------------------------------------------
+            dbc.Row([
+                dbc.Col([
+                    html.H5("3. Select OpenAI Model:"),
+                    dcc.Dropdown(
+                        id="model-selector",
+                        options=[
+                            {"label": "gpt-4o ($5.00/$15.00)", "value": "gpt-4o"},
+                            {"label": "gpt-4-turbo ($10.00/$30.00)", "value": "gpt-4-turbo"},
+                            {"label": "gpt-4 ($30.00/$60.00)", "value": "gpt-4"},
+                            {"label": "gpt-3.5-turbo ($0.50/$1.50)", "value": "gpt-3.5-turbo"},
+                            {"label": "o3 ($10.00/$40.00)", "value": "o3"},
+                            {"label": "o3-mini ($1.10/$4.40)", "value": "o3-mini"},
+                        ],
+                        value="gpt-4o",
+                        clearable=False
+                    )
+                ])
+            ]),
+            html.Hr(),
+
+            # 4) URL list ---------------------------------------------------
+            dbc.Row([
+                dbc.Col([
+                    html.H5("4. Upload URL List (CSV, one column of URLs):"),
+                    dcc.Upload(
+                        id="upload-data",
+                        children=html.Div(["Drag and Drop or ", html.A("Select URL File")]),
+                        style={"width": "100%", "height": "60px", "lineHeight": "60px",
+                               "borderWidth": "1px", "borderStyle": "dashed",
+                               "borderRadius": "5px", "textAlign": "center"},
+                        multiple=False,
+                    ),
+                    html.Div(id="upload-feedback",
+                             style={"color": "green", "marginTop": "10px"}),
+                    html.Div(id="file-upload-status")
+                ])
+            ]),
+
+            # Run button + progress ----------------------------------------
+            dbc.Row([
+                dbc.Col([
+                    dbc.Button("Run Classification", id="run-button",
+                               color="primary", className="mt-2"),
+                    dcc.Loading(children=html.Div(id="run-status", className="mt-2"),
+                                type="default"),
+                    html.Div(id="progress-indicator", className="mt-2",
+                             style={"whiteSpace": "pre-wrap"}),
+                    dcc.Store(id="stored-csv")
+                ])
+            ]),
+            html.Hr(),
+
+            # Results table -------------------------------------------------
+            html.H5("Output Table"),
+            dash_table.DataTable(
+                id="output-table",
+                page_size=10,
+                style_table={"overflowX": "auto"},
+                style_cell={"textAlign": "left"}
+            ),
+            html.Br(),
+            dcc.Download(id="download-result"),
+            html.Div([
+                dbc.Input(id="desired-filename",
+                          placeholder="classified_websites",
+                          value="classified_websites",
+                          type="text",
+                          style={"maxWidth": "230px",
+                                 "display": "inline-block",
+                                 "marginRight": "8px"}),
+            ], style={"display": "inline-block"}),
+            dbc.Button("Download CSV", id="download-btn", color="success"),
+        ]),  # end Classification Tool tab
+
+        # -------------------------------------------------------- ENRICH COMPANIES
+        dbc.Tab(label="Enrich Companies", tab_id="enrich-main", children=[
+            html.Br(),
+            html.H3("Enrich Companies"),
+            html.P("This page is reserved for future enrichment features "
+                   "(e.g., pulling firmographics, ownership data, etc.).")
+        ]),
+
+        # --------------------------------------------------------------- INSTRUCTIONS
+        dbc.Tab(label="Instructions", tab_id="instructions-main", children=[
+            html.Br(),
+            html.H3("How to Use This App"),
+            html.Ol([
+                html.Li("Upload your class codes file (CSV/XLSX)."),
+                html.Li("Upload a prompt template (.txt)."),
+                html.Li("Choose an OpenAI model."),
+                html.Li("Upload a list of URLs to classify."),
+                html.Li("Click “Run Classification”. Watch progress below."),
+                html.Li("Review results and download the CSV when complete."),
+            ]),
+            html.P([
+                "Full documentation: ",
+                html.A("View on Google Drive ↗",
+                    href="https://drive.google.com/your_shared_link_here",
+                    target="_blank",               # open in new tab
+                    style={"textDecoration": "underline"})
+            ]),
+            html.P("Tip: Edit the prompt template to experiment with different "
+                   "instructions for the model.")
+        ]),
+    ]),
+    fluid=True
+)
+
+# === CLIENT-SIDE “in-progress” MESSAGE ===========================================
 app.clientside_callback(
     """
     function(n_clicks){
@@ -163,7 +186,7 @@ app.clientside_callback(
     Input("run-button", "n_clicks")
 )
 
-# === Callbacks ===================================================================
+# === CALLBACKS ===================================================================
 @app.callback(
     Output("upload-code-feedback", "children"),
     Output("stored-code-list", "data"),
@@ -216,7 +239,6 @@ def update_upload_feedback(contents, filename):
     Output("output-table", "columns"),
     Output("stored-csv", "data"),
     Output("progress-indicator", "children"),
-    Output("summary-chart", "figure"),           # NEW
     Input("run-button", "n_clicks"),
     State("stored-code-list", "data"),
     State("stored-prompt-text", "data"),
@@ -225,12 +247,11 @@ def update_upload_feedback(contents, filename):
     State("upload-data", "filename"),
     prevent_initial_call=True
 )
-def run_classifier(n_clicks, codes, prompt, model,
+def run_classifier(_, codes, prompt, model,
                    contents, filename):
 
-    # basic validation ---------------------------------------------------------
     if not contents or not codes or not prompt:
-        return "❌ Missing file, codes, or prompt.", "", [], [], None, "", {}
+        return "❌ Missing file, codes, or prompt.", "", [], [], None, ""
 
     # read URL list ------------------------------------------------------------
     try:
@@ -240,7 +261,7 @@ def run_classifier(n_clicks, codes, prompt, model,
         else:
             df = pd.read_csv(io.StringIO(decoded.decode("utf-8")), header=None, names=["url"])
     except Exception as e:
-        return f"❌ Could not read URL file: {e}", "", [], [], None, "", {}
+        return f"❌ Could not read URL file: {e}", "", [], [], None, ""
 
     # iterate URLs -------------------------------------------------------------
     top1, top2, top3, progress_log = [], [], [], []
@@ -277,60 +298,30 @@ def run_classifier(n_clicks, codes, prompt, model,
 
     columns = [{"name": c, "id": c} for c in df.columns]
     data = df.to_dict("records")
-
-    # --- downloadable CSV (plain text) --------------------------------------
-    csv_text = df.to_csv(index=False)       # raw CSV string
-    stored   = csv_text                     # put in dcc.Store
-
-    # --- pie chart ----------------------------------------------------------
-    fig = px.pie(df, names="top_1_code", hole=0.3,
-                 title="Top-1 Code Distribution") if df["top_1_code"].notna().any() else {}
-
-    # --------------- final return ------------------------------------------
-    return (
-        f"✅ Uploaded: {filename}",
-        f"✅ Processed {len(df)} URLs",
-        data,                # table rows
-        columns,             # table columns
-        stored,              # <-- replaces old “download” variable
-        "\n".join(progress_log),
-        fig
-    )
-
-    # pie chart ---------------------------------------------------------------
-    if df["top_1_code"].notna().any():
-        fig = px.pie(df, names="top_1_code",
-                     title="Top-1 Code Distribution", hole=0.3)
-    else:
-        fig = {}  # empty figure if nothing classified
+    csv_text = df.to_csv(index=False)
 
     return (
         f"✅ Uploaded: {filename}",
         f"✅ Processed {len(df)} URLs",
         data,
         columns,
-        download,
-        "\n".join(progress_log),
-        fig
+        csv_text,
+        "\n".join(progress_log)
     )
 
 # ---------------------------- DOWNLOAD CALLBACK ----------------------------------
 @app.callback(
     Output("download-result", "data"),
     Input("download-btn", "n_clicks"),
-    State("stored-csv", "data"),        # raw CSV text
-    State("desired-filename", "value"), # user-typed name
+    State("stored-csv", "data"),
+    State("desired-filename", "value"),
     prevent_initial_call=True
 )
 def trigger_download(_, csv_text, name):
     fname = (name or "classified_websites").strip()
     if not fname.lower().endswith(".csv"):
         fname += ".csv"
-    return {
-        "content": csv_text,
-        "filename": fname,
-        "type": "text/csv"
-    }
+    return {"content": csv_text, "filename": fname, "type": "text/csv"}
 
 # === Helper functions ============================================================
 def fetch_with_requests(url):
